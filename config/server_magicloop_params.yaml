@@ -1,0 +1,2 @@
+magic_loop_server_url : "http://mosh-back.rag-cloud-bg.hosteur.com"
+item_association_route : "/webhook/payment/item-association"
