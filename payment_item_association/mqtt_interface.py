@@ -5,7 +5,7 @@ import threading
 import paho.mqtt.client as mqtt
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from server_interface import serverInterface
 
 class MQTTInterface:
@@ -49,8 +49,8 @@ class MQTTInterface:
 
         self.main_loop_enable = False
 
-    def get_time_stamp(item):
-        return datetime.strptime(item['time_stamp'], "%Y-%m-%d %H:%M:%S")
+        self.lock_item = threading.Lock()
+        self.lock_transaction = threading.Lock()
     
     def on_connect(self, client, userdata, flags, rc):
         """Callback pour la connexion au broker."""
@@ -72,15 +72,20 @@ class MQTTInterface:
                     'time_stamp': payload['time_stamp']
                 }
                 print(f"Items reçu: {items}")
-                self.item_list.append(items)
+                with self.lock_item:
+                    self.item_list.append(items)
             elif msg.topic == self.topic_payment :
                 payment = {
                     'transactionId': payload['transactionId'],
                     'quantity': payload['count'],
                     'time_stamp': payload['createdAt']
                 }
+                payment['time_stamp'] = datetime.strptime(payment['time_stamp'], "%Y-%m-%d %H:%M:%S")
+                payment['time_stamp'] = payment['time_stamp'] + timedelta(hours=2)
+                payment['time_stamp'] = payment['time_stamp'].strftime("%Y-%m-%d %H:%M:%S")
                 print(f"Paiement reçu: {payment}")
-                self.transactions_list.append(payment)
+                with self.lock_transaction:
+                    self.transactions_list.append(payment)
         except json.JSONDecodeError:
             print("Erreur lors du décodage du message JSON")
 
@@ -104,41 +109,44 @@ class MQTTInterface:
         while (self.main_loop_enable) :
             if len(self.transactions_list) != 0 and len(self.item_list) != 0 :
                 # 1. On trie les liste par date de la plus ancienne à la plus récente
-                self.item_list.sort(key=lambda item: datetime.strptime(item['time_stamp'], "%Y-%m-%d %H:%M:%S"))
-                self.transactions_list.sort(key=lambda item: datetime.strptime(item['time_stamp'], "%Y-%m-%d %H:%M:%S"))
-                # 2. On parcourt la transaction liste
-                for transaction_index in range(len(self.transactions_list)) :
-                    #a. on parcourt l'item liste 
-                    for item_index in range(len(self.item_list)):
-                        #b. si la date de la transaction est anterieur à la date de lecture
-                        if self.transactions_list[transaction_index]['time_stamp'] < self.item_list[item_index]['time_stamp'] :
-                            #c. et si la quantitée acheté est égale à la quantité scannée
-                            if self.transactions_list[transaction_index]['quantity'] == len(self.item_list[item_index]['item_list']) :
-                                print(f"transaction : {self.transactions_list[transaction_index]} will be associated with {self.item_list[item_index]}")
-                                linked = {
-                                    'transaction' : transaction_index,
-                                    'items' : item_index
-                                }
-                                self.linked_list.append(linked)
-                                break
-                print(f'linked list {self.linked_list}')
-                # 3. Pour chaque élément linké, on les POST sur le serveur 
-                for link in self.linked_list.copy() :
-                    transaction_id = self.transactions_list[link['transaction']]['transactionId']
-                    items = self.item_list[link['items']]['item_list']
-                    data =  {
-                        'id' : transaction_id,
-                        'items' : items
-                    }
-                    print(f'data that will be send {data}')
-                    #return_value = self.server_interface.itemTransactionAssociation(data)
-                    return_value = 1
-                    if return_value == 1 :
-                        self.transactions_list.pop(link['transaction'])
-                        self.item_list.pop(link['items'])
-                        self.linked_list.remove(link)
-                    else :
-                        pass
+                with self.lock_item and self.lock_transaction :
+                    self.item_list.sort(key=lambda item: datetime.strptime(item['time_stamp'], "%Y-%m-%d %H:%M:%S"))
+                    self.transactions_list.sort(key=lambda item: datetime.strptime(item['time_stamp'], "%Y-%m-%d %H:%M:%S"))
+                    # 2. On parcourt la transaction liste
+                    for transaction_index in range(len(self.transactions_list)) :
+                        #a. on parcourt l'item liste 
+                        for item_index in range(len(self.item_list)):
+                            #b. si la date de la transaction est anterieur à la date de lecture
+                            if self.transactions_list[transaction_index]['time_stamp'] < self.item_list[item_index]['time_stamp'] :
+                                #c. et si la quantitée acheté est égale à la quantité scannée
+                                if self.transactions_list[transaction_index]['quantity'] == len(self.item_list[item_index]['item_list']) :
+                                    print(f"transaction : {self.transactions_list[transaction_index]} will be associated with {self.item_list[item_index]}")
+                                    linked = {
+                                        'transaction' : self.transactions_list[transaction_index],
+                                        'items' : self.item_list[item_index],
+                                        'sending_done' : False
+                                    }
+                                    self.linked_list.append(linked)
+                                    self.item_list.pop(item_index)
+                                    break
+                    print(f'linked list {self.linked_list}')
+                    # 3. Pour chaque élément linké, on les POST sur le serveur 
+                    for link in self.linked_list.copy() :
+                        transaction_id = link['transaction']['transactionId']
+                        items = link['items']['item_list']
+                        data =  {
+                            'id' : transaction_id,
+                            'items' : items
+                        }
+                        print(f'data that will be send {data}')
+                        return_value = self.server_interface.itemTransactionAssociation(data)
+                        return_value = 1
+                        if return_value == 1 :
+                            link['sending_done'] = True
+                            self.transactions_list.remove(link['transaction'])
+                            self.linked_list.remove(link)
+                        else :
+                            pass
             time.sleep(0.2)
         return
 

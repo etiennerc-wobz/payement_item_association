@@ -1,0 +1,13 @@
+[Unit]
+Description=Script python pour associer le paiement aux items via les topics mqtt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/home/magicloop-server/payment_item_association/venv/bin/python /home/magicloop-server/payment_item_association/payment_item_association/mqtt_interface.py
+WorkingDirectory=/home/magicloop-server/payment_item_association/
+Restart=always
+User=magicloop-server
+
+[Install]
+WantedBy=multi-user.target
