@@ -1,7 +1,8 @@
 broker_address : env-6680648.rag-cloud.hosteur.com
 port : 1883
-topic_payment : payment/waiting-association
-topic_item : item/waiting-association
+topic_payment_name : payment/waiting-association
+topic_item_name : item/waiting-association
 username : iot_magic
 password : lRJVjo8DjGjP4zO
-rpi_id : "IOT_RFID_MAT"
+magic_carpet_1_id : "magic_carpet_1"
+magic_carpet_2_id : "magic_carpet_2"
